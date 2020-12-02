@@ -1,6 +1,7 @@
 using JLD2, FileIO
 using Test
 
+include("bufferedreader.jl")
 include("lookup3.jl")
 include("internal.jl")
 include("rw.jl")
@@ -13,7 +14,4 @@ include("modules-nested.jl")
 include("isreconstructed.jl")
 include("backwards_compatibility.jl")
 include("inlineunion.jl")
-
-# Only run the reconstruction tests on versions where `workspace` is a thing
-
-#include("customserialization.jl") currently broken due to #265
+include("customserialization.jl")

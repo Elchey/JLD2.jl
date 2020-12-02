@@ -16,6 +16,13 @@ struct UntypedWrapper
 end
 Base.:(==)(a::UntypedWrapper, b::UntypedWrapper) = a.x == b.x
 
+# Mutable field wrapper
+mutable struct MutableFieldWrapper{T}
+    x::T
+end
+Base.:(==)(a::MutableFieldWrapper, b::MutableFieldWrapper) = a.x == b.x
+
+
 # This is a type with a custom serialization, where the original type has data
 # but the custom serialization is empty
 struct CSA
@@ -40,7 +47,7 @@ struct CSB end
 b = CSB()
 
 struct CSBSerialization
-    x::Int
+    x::Int64
 end
 JLD2.writeas(::Type{CSB}) = CSBSerialization
 function JLD2.wconvert(::Type{CSBSerialization}, x::CSB)
@@ -178,16 +185,18 @@ function Base.convert(::Type{Union}, x::CSK)
 end
 function Base.convert(::Type{CSK}, x::Union)
     global converted = true
-    CSK(x.types...)
+    CSK(Base.uniontypes(x)...)
 end
 
 function write_tests(file, prefix, obj)
     write(file, prefix, obj)
     write(file, "$(prefix)_singlefieldwrapper", SingleFieldWrapper(obj))
-    write(file, "$(prefix)_multifieldwrapper", MultiFieldWrapper(obj, 5935250212119237787))
+    write(file, "$(prefix)_multifieldwrapper", MultiFieldWrapper(obj, 2147483645))
     write(file, "$(prefix)_untypedwrapper", UntypedWrapper(obj))
     write(file, "$(prefix)_arr", [obj])
     write(file, "$(prefix)_empty_arr", typeof(obj)[])
+    write(file, "$(prefix)_tuple", (obj,))
+    write(file, "$(prefix)_mutablefieldwrapper", MutableFieldWrapper(obj))
 end
 
 function read_tests(file, prefix, obj)
@@ -195,36 +204,81 @@ function read_tests(file, prefix, obj)
     @test read(file, prefix) == obj
     @test converted
     @test read(file, "$(prefix)_singlefieldwrapper") == SingleFieldWrapper(obj)
-    @test read(file, "$(prefix)_multifieldwrapper") == MultiFieldWrapper(obj, 5935250212119237787)
+    @test read(file, "$(prefix)_multifieldwrapper") == MultiFieldWrapper(obj, 2147483645)
     @test read(file, "$(prefix)_untypedwrapper") == UntypedWrapper(obj)
     arr = read(file, "$(prefix)_arr")
     @test typeof(arr) == Vector{typeof(obj)} && length(arr) == 1 && arr[1] == obj
     empty_arr = read(file, "$(prefix)_empty_arr")
     @test typeof(empty_arr) == Vector{typeof(obj)} && length(empty_arr) == 0
+    @test read(file, "$(prefix)_tuple") == (obj,) 
+    @test read(file, "$(prefix)_mutablefieldwrapper") == MutableFieldWrapper(obj)
 end
 
-fn = joinpath(mktempdir(),"test.jld")
-println(fn)
-file = jldopen(fn, "w")
-write_tests(file, "a", a)
-write_tests(file, "b", b)
-write_tests(file, "c", c)
-write_tests(file, "d", d)
-write_tests(file, "e", e)
-write_tests(file, "f", f)
-write_tests(file, "g", g)
-write_tests(file, "h", h)
-write_tests(file, "k", k)
-close(file)
+@testset "Custom Serialization" begin
+    fn = joinpath(mktempdir(),"test.jld")
+    file = jldopen(fn, "w")
+    write_tests(file, "a", a)
+    write_tests(file, "b", b)
+    write_tests(file, "c", c)
+    write_tests(file, "d", d)
+    write_tests(file, "e", e)
+    write_tests(file, "f", f)
+    write_tests(file, "g", g)
+    write_tests(file, "h", h)
+    write_tests(file, "k", k)
+    close(file)
 
-file = jldopen(fn, "r")
-read_tests(file, "a", a)
-read_tests(file, "b", b)
-read_tests(file, "c", c)
-read_tests(file, "d", d)
-read_tests(file, "e", e)
-read_tests(file, "f", f)
-read_tests(file, "g", g)
-read_tests(file, "h", h)
-read_tests(file, "k", k)
-close(file)
+
+    file = jldopen(fn, "r")
+    read_tests(file, "a", a)
+    read_tests(file, "b", b)
+    read_tests(file, "c", c)
+    read_tests(file, "d", d)
+    read_tests(file, "e", e)
+    read_tests(file, "f", f)
+    read_tests(file, "g", g)
+    read_tests(file, "h", h)
+    read_tests(file, "k", k)
+    close(file)
+end
+
+
+# Function Reconstruction (does not strictly belong to custom serialization but was
+# broken by it)
+struct S1
+    a
+    f
+end
+
+struct S2{F}
+    a
+    f::F
+end
+
+struct S3{F}
+    f::F
+end
+
+λ() = 42
+
+function round_trip(x)
+    mktempdir() do dir
+        fn = joinpath(dir, "test.jld2")
+        @save fn grp=x
+        @load fn grp
+        return grp
+    end
+end
+
+@testset "round trip Function values" begin
+    @test 42 == round_trip(λ)()
+    @test 42 == first(round_trip((λ,)))()
+    @test 42 == first(round_trip((λ, λ)))()
+    @test 42 == first(round_trip((λ, 42)))()
+    @test 42 == first(round_trip([λ]))()
+    @test 42 == first(round_trip([λ, λ]))()
+    @test 42 == first(round_trip([λ, 42]))()
+    @test 42 == round_trip(S1(42, λ)).f()
+    @test 42 == round_trip(S2(42, λ)).f()
+    @test 42 == round_trip(S3(λ)).f()
+end
