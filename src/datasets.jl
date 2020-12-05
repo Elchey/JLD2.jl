@@ -320,19 +320,20 @@ function read_array(f::JLDFile, dataspace::ReadDataspace,
                     filter_id::UInt16, header_offset::RelOffset,
                     attributes::Union{Vector{ReadAttribute},Nothing}) where {T,RR}
     io = f.io
-    @show data_offset = position(io)
-    @show ndims, offset = get_ndims_offset(f, dataspace, attributes)
+    data_offset = position(io)
+    ndims, offset = get_ndims_offset(f, dataspace, attributes)
     
     seek(io, offset)
     v = construct_array(io, T, Int(ndims))
-    header_offset !== NULL_REFERENCE && (f.jloffset[header_offset] = WeakRef(v))
     n = length(v)
     seek(io, data_offset)
     if filter_id !=0
-        read_compressed_array!(v, f, rr, data_length, Val{filter_id}())
+        decompressor = get_decompressor(f, filter_id)
+        read_compressed_array!(v, f, rr, data_length, decompressor)
     else
         read_array!(v, f, rr)
     end
+    header_offset !== NULL_REFERENCE && (f.jloffset[header_offset] = WeakRef(v))
     v
 end
 
@@ -354,18 +355,35 @@ function payload_size_without_storage_message(dataspace::WriteDataspace, datatyp
 end
 
 
-function write_dataset(f::JLDFile, dataspace::WriteDataspace, datatype::H5Datatype, odr::S, data::Array{T}, wsession::JLDWriteSession) where {T,S}
+function write_dataset(
+        f::JLDFile,
+        dataspace::WriteDataspace,
+        datatype::H5Datatype,
+        odr::S,
+        data::Array{T},
+        wsession::JLDWriteSession,
+        compress::Union{Bool,Symbol} = f.compress,
+        ) where {T,S}
     io = f.io
     datasz = odr_sizeof(odr) * numel(dataspace)
-    layout_class = datasz < 8192 ? LC_COMPACT_STORAGE :
-                   f.compress ? LC_CHUNKED_STORAGE : LC_CONTIGUOUS_STORAGE
+    #layout_class
+    if datasz < 8192 
+        layout_class = LC_COMPACT_STORAGE
+    elseif f.compress != false 
+        layout_class = LC_CHUNKED_STORAGE 
+    else 
+        layout_class = LC_CONTIGUOUS_STORAGE
+    end
     psz = payload_size_without_storage_message(dataspace, datatype)
     if datasz < 8192
         layout_class = LC_COMPACT_STORAGE
         psz += sizeof(CompactStorageMessage) + datasz
-    elseif f.compress && isconcretetype(T) && isbitstype(T)
+    elseif compress != false && isconcretetype(T) && isbitstype(T)
+        # Only now figure out if the compression argument is validate
+        filter_id, compressor = get_compressor(f, compress)
+
         layout_class = LC_CHUNKED_STORAGE
-        psz += chunked_storage_message_size(ndims(data)) + length(DEFLATE_PIPELINE_MESSAGE)
+        psz += chunked_storage_message_size(ndims(data)) + PIPELINE_MESSAGE_SIZE
     else
         layout_class = LC_CONTIGUOUS_STORAGE
         psz += sizeof(ContiguousStorageMessage)
@@ -394,7 +412,7 @@ function write_dataset(f::JLDFile, dataspace::WriteDataspace, datatype::H5Dataty
         write(io, end_checksum(cio))
     elseif layout_class == LC_CHUNKED_STORAGE
 
-        write_compressed_data(cio, f, data, odr, wsession)
+        write_compressed_data(cio, f, data, odr, wsession, filter_id, compressor)
 
     else
         write(cio, ContiguousStorageMessage(datasz, h5offset(f, f.end_of_data)))

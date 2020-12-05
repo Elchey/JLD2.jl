@@ -5,6 +5,7 @@ import Base.sizeof
 using MacroTools
 using Printf
 using Mmap
+using TranscodingStreams
 
 export jldopen, @load,   @save
 
@@ -134,7 +135,7 @@ mutable struct JLDFile{T<:IO}
     path::String
     writable::Bool
     written::Bool
-    compress::Bool
+    compress::Union{Bool,Symbol}
     mmaparrays::Bool
     n_times_opened::Int
     datatype_locations::OrderedDict{RelOffset,CommittedDatatype}
@@ -152,7 +153,7 @@ mutable struct JLDFile{T<:IO}
     types_group::Group
 
     function JLDFile{T}(io::IO, path::AbstractString, writable::Bool, written::Bool,
-                        compress::Bool, mmaparrays::Bool) where T
+                        compress::Union{Bool,Symbol}, mmaparrays::Bool) where T
         f = new(io, path, writable, written, compress, mmaparrays, 1,
             OrderedDict{RelOffset,CommittedDatatype}(), H5Datatype[],
             JLDWriteSession(), IdDict(), IdDict(), Dict{RelOffset,WeakRef}(),
@@ -162,8 +163,7 @@ mutable struct JLDFile{T<:IO}
         f
     end
 end
-JLDFile(io::IO, path::AbstractString, writable::Bool, written::Bool, compress::Bool,
-        mmaparrays::Bool) =
+JLDFile(io::IO, path::AbstractString, writable::Bool, written::Bool, compress, mmaparrays::Bool) =
     JLDFile{typeof(io)}(io, path, writable, written, compress, mmaparrays)
 
 """
@@ -210,7 +210,8 @@ const OPEN_FILES = Dict{String,WeakRef}()
 const OPEN_FILES_LOCK = ReentrantLock()
 function jldopen(fname::AbstractString, wr::Bool, create::Bool, truncate::Bool, iotype::T=MmapIO;
                  fallback::Union{Type, Nothing} = FallbackType(iotype),
-                 compress::Bool=false, mmaparrays::Bool=false) where T<:Union{Type{IOStream},Type{MmapIO}}
+                 compress::Union{Bool,Symbol}=false,
+                 mmaparrays::Bool=false) where T<:Union{Type{IOStream},Type{MmapIO}}
     mmaparrays && @warn "mmaparrays keyword is currently ignored" maxlog=1
     exists = ispath(fname)
 
