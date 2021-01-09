@@ -379,8 +379,10 @@ function write_dataset(
         psz += sizeof(CompactStorageMessage) + datasz
     elseif compress != false && isconcretetype(T) && isbitstype(T)
         # Only now figure out if the compression argument is valid
-        filter_id, compressor = get_compressor(compress)
-
+        invoke_again, filter_id, compressor = get_compressor(compress)
+        if invoke_again
+            return Base.invokelatest(write_dataset, f, dataspace, datatype, odr, data, wsession, compress)
+        end
         layout_class = LC_CHUNKED_STORAGE
         psz += chunked_storage_message_size(ndims(data)) + PIPELINE_MESSAGE_SIZE
     else

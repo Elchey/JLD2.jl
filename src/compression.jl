@@ -74,6 +74,7 @@ function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSessi
         @warn "Only arrays can be compressed."
     end
     g[name] = write_dataset(f, obj, wsession)
+    nothing
 end
 
 
@@ -83,9 +84,9 @@ function get_compressor(::Bool)
     # No specific compression lib was given. Return the default
     if !isdefined(JLD2, :CodecLz4)
         m = checked_import(:CodecLz4)
-        return Base.invokelatest(get_compressor, true)
+        return true, Base.invokelatest(get_compressor, true)[2:3]...
     end
-    SUPPORTED_COMPRESSIONLIBS[:LZ4FrameCompressor], JLD2.CodecLz4.LZ4FrameCompressor()
+    false, SUPPORTED_COMPRESSIONLIBS[:LZ4FrameCompressor], JLD2.CodecLz4.LZ4FrameCompressor()
 end
 
 function get_decompressor(filter_id::UInt16)
