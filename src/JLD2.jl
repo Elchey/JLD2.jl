@@ -1,5 +1,5 @@
 module JLD2
-using DataStructures, CodecZlib, Blosc
+using DataStructures
 using Requires
 import Base.sizeof
 using MacroTools
@@ -135,7 +135,7 @@ mutable struct JLDFile{T<:IO}
     path::String
     writable::Bool
     written::Bool
-    compress::Union{Bool,Symbol}
+    compress#::Union{Bool,Symbol}
     mmaparrays::Bool
     n_times_opened::Int
     datatype_locations::OrderedDict{RelOffset,CommittedDatatype}
@@ -153,7 +153,8 @@ mutable struct JLDFile{T<:IO}
     types_group::Group
 
     function JLDFile{T}(io::IO, path::AbstractString, writable::Bool, written::Bool,
-                        compress::Union{Bool,Symbol}, mmaparrays::Bool) where T
+                        compress,#::Union{Bool,Symbol},
+                        mmaparrays::Bool) where T
         f = new(io, path, writable, written, compress, mmaparrays, 1,
             OrderedDict{RelOffset,CommittedDatatype}(), H5Datatype[],
             JLDWriteSession(), IdDict(), IdDict(), Dict{RelOffset,WeakRef}(),
@@ -210,8 +211,9 @@ const OPEN_FILES = Dict{String,WeakRef}()
 const OPEN_FILES_LOCK = ReentrantLock()
 function jldopen(fname::AbstractString, wr::Bool, create::Bool, truncate::Bool, iotype::T=MmapIO;
                  fallback::Union{Type, Nothing} = FallbackType(iotype),
-                 compress::Union{Bool,Symbol}=false,
-                 mmaparrays::Bool=false) where T<:Union{Type{IOStream},Type{MmapIO}}
+                 compress=false,
+                 mmaparrays::Bool=false
+                 ) where T<:Union{Type{IOStream},Type{MmapIO}}
     mmaparrays && @warn "mmaparrays keyword is currently ignored" maxlog=1
     exists = ispath(fname)
 
@@ -338,8 +340,8 @@ function prewrite(f::JLDFile)
 end
 
 Base.read(f::JLDFile, name::AbstractString) = f.root_group[name]
-Base.write(f::JLDFile, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession()) =
-    write(f.root_group, name, obj, wsession)
+#Base.write(f::JLDFile, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession()) =
+#    write(f.root_group, name, obj, wsession)
 
 Base.getindex(f::JLDFile, name::AbstractString) = f.root_group[name]
 Base.setindex!(f::JLDFile, obj, name::AbstractString) = (f.root_group[name] = obj; f)

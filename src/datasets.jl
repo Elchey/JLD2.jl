@@ -328,8 +328,7 @@ function read_array(f::JLDFile, dataspace::ReadDataspace,
     n = length(v)
     seek(io, data_offset)
     if filter_id !=0
-        decompressor = get_decompressor(f, filter_id)
-        read_compressed_array!(v, f, rr, data_length, decompressor)
+        read_compressed_array!(v, f, rr, data_length, filter_id)
     else
         read_array!(v, f, rr)
     end
@@ -362,14 +361,14 @@ function write_dataset(
         odr::S,
         data::Array{T},
         wsession::JLDWriteSession,
-        compress::Union{Bool,Symbol} = f.compress,
+        compress = f.compress,
         ) where {T,S}
     io = f.io
     datasz = odr_sizeof(odr) * numel(dataspace)
     #layout_class
     if datasz < 8192 
         layout_class = LC_COMPACT_STORAGE
-    elseif f.compress != false 
+    elseif compress != false 
         layout_class = LC_CHUNKED_STORAGE 
     else 
         layout_class = LC_CONTIGUOUS_STORAGE
@@ -379,8 +378,8 @@ function write_dataset(
         layout_class = LC_COMPACT_STORAGE
         psz += sizeof(CompactStorageMessage) + datasz
     elseif compress != false && isconcretetype(T) && isbitstype(T)
-        # Only now figure out if the compression argument is validate
-        filter_id, compressor = get_compressor(f, compress)
+        # Only now figure out if the compression argument is valid
+        filter_id, compressor = get_compressor(compress)
 
         layout_class = LC_CHUNKED_STORAGE
         psz += chunked_storage_message_size(ndims(data)) + PIPELINE_MESSAGE_SIZE
