@@ -53,13 +53,11 @@ end
 #############################################################################################################
 
 # jld2.jl 341
-Base.write(f::JLDFile, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession();
-    compress=nothing) =
-    write(f.root_group, name, obj, wsession; compress)
+Base.write(f::JLDFile, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession(); compress=nothing) =
+    write(f.root_group, name, obj, wsession; compress=compress)
 
 # groups.jl 112
-function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession();
-    compress=nothing)
+function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession(); compress=nothing)
     if g.last_chunk_start_offset != -1 && g.continuation_message_goes_here == -1
         error("objects cannot be added to this group because it was created with a previous version of JLD2")
     end
