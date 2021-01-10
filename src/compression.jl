@@ -2,11 +2,13 @@
 const SUPPORTED_COMPRESSIONLIBS = Dict(
     :ZlibCompressor => UInt16(1),
     :LZ4FrameCompressor => UInt16(32004),
+    :Bzip2Compressor => UInt16(307),
     )
 
 # For loading need filter_ids as keys
 const REGISTERED_COMPRESSIONLIBS = Dict(
     UInt16(1) => (:CodecZlib, :ZlibCompressor, :ZlibDecompressor),
+    UInt16(307) => (:CodecBzip2, :Bzip2Compressor, :Bzip2Decompressor),
     UInt16(32004) => (:CodecLz4, :LZ4FrameCompressor, :LZ4FrameDecompressor),
 )
 
@@ -76,7 +78,7 @@ function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSessi
 end
 
 
-get_compressor(compressor) = SUPPORTED_COMPRESSIONLIBS[nameof(typeof(compressor))], compressor
+get_compressor(compressor) = false, SUPPORTED_COMPRESSIONLIBS[nameof(typeof(compressor))], compressor
 
 function get_compressor(::Bool)
     # No specific compression lib was given. Return the default
