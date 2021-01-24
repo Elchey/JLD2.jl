@@ -14,10 +14,24 @@ const OBJECT_HEADER_SIGNATURE = htol(0x5244484f) # "OHDR"
 # Currently we specify that all offsets and lengths are 8 bytes
 const Length = UInt64
 
-struct UnsupportedVersionException <: Exception end
-struct UnsupportedFeatureException <: Exception end
-struct InvalidDataException <: Exception end
-struct InternalError <: Exception end
+struct UnsupportedVersionException <: Exception 
+    msg::String
+end
+struct UnsupportedFeatureException <: Exception 
+    msg::String
+end
+struct InvalidDataException <: Exception 
+    msg::String
+end
+struct InternalError <: Exception 
+    msg::String
+end
+
+# In the future a more descriptive error should be returned
+UnsupportedVersionException() = UnsupportedVersionException("")
+UnsupportedFeatureException() = UnsupportedFeatureException("")
+InvalidDataException() = InvalidDataException("")
+InternalError() = InternalError("")
 
 include("file_header.jl")
 include("Lookup3.jl")
