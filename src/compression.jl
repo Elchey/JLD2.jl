@@ -1,18 +1,20 @@
 
-const SUPPORTED_COMPRESSIONLIBS = Dict(
+const COMPRESSOR_TO_ID = Dict(
     :ZlibCompressor => UInt16(1),
-    :LZ4FrameCompressor => UInt16(32004),
     :Bzip2Compressor => UInt16(307),
+    #:BloscCompressor => UInt16(32001),
+    :LZ4FrameCompressor => UInt16(32004),
     )
 
 # For loading need filter_ids as keys
-const REGISTERED_COMPRESSIONLIBS = Dict(
-    UInt16(1) => (:CodecZlib, :ZlibCompressor, :ZlibDecompressor),
-    UInt16(307) => (:CodecBzip2, :Bzip2Compressor, :Bzip2Decompressor),
-    UInt16(32004) => (:CodecLz4, :LZ4FrameCompressor, :LZ4FrameDecompressor),
+const ID_TO_DECOMPRESSOR = Dict(
+    UInt16(1) => (:CodecZlib, :ZlibCompressor, :ZlibDecompressor, ""),
+    UInt16(307) => (:CodecBzip2, :Bzip2Compressor, :Bzip2Decompressor, "BZIP2"),
+    #UInt16(32001) => (:Blosc, :BloscCompressor, :BloscDecompressor, "BLOSC"),
+    UInt16(32004) => (:CodecLz4, :LZ4FrameCompressor, :LZ4FrameDecompressor, "LZ4"),
 )
 
-issupported_filter(filter_id) = filter_id ∈ keys(REGISTERED_COMPRESSIONLIBS)
+issupported_filter(filter_id) = filter_id ∈ keys(ID_TO_DECOMPRESSOR)
 
 #############################################################################################################
 # Dynamic Package Loading Logic copied from FileIO
@@ -60,9 +62,6 @@ Base.write(f::JLDFile, name::AbstractString, obj, wsession::JLDWriteSession=JLDW
 
 # groups.jl 112
 function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSession=JLDWriteSession(); compress=nothing)
-    if g.last_chunk_start_offset != -1 && g.continuation_message_goes_here == -1
-        error("objects cannot be added to this group because it was created with a previous version of JLD2")
-    end
     f = g.f
     prewrite(f)
     (g, name) = pathize(g, name, true)
@@ -78,36 +77,45 @@ function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSessi
 end
 
 
-get_compressor(compressor) = false, SUPPORTED_COMPRESSIONLIBS[nameof(typeof(compressor))], compressor
+get_compressor(compressor) = false, COMPRESSOR_TO_ID[nameof(typeof(compressor))], compressor
 
-function get_compressor(::Bool)
+function get_compressor(::Bool) 
+    # This method is only called when the argument is true
     # No specific compression lib was given. Return the default
-    if !isdefined(JLD2, :CodecLz4)
-        m = checked_import(:CodecLz4)
+    if !isdefined(JLD2, :CodecZlib)
+        m = checked_import(:CodecZlib)
         return true, Base.invokelatest(get_compressor, true)[2:3]...
     end
-    false, SUPPORTED_COMPRESSIONLIBS[:LZ4FrameCompressor], JLD2.CodecLz4.LZ4FrameCompressor()
+    false, COMPRESSOR_TO_ID[:ZlibCompressor], CodecZlib.ZlibCompressor()
 end
 
 function get_decompressor(filter_id::UInt16)
-    modname, compressorname, decompressorname = REGISTERED_COMPRESSIONLIBS[filter_id]
+    modname, compressorname, decompressorname, = ID_TO_DECOMPRESSOR[filter_id]
     invoke_again, m = checked_import(modname)
     return invoke_again, @eval $m.$decompressorname()
 end
 
-function deflate_pipeline_message(filter_id::UInt16)
-    io = IOBuffer()
-    write(io, HeaderMessage(HM_FILTER_PIPELINE, 12, 0))
+pipeline_message_size(filter_id) = 4 + 12 + (filter_id > 255)*(2 + length(ID_TO_DECOMPRESSOR[filter_id][4]))
+
+function write_filter_pipeline_message(io, filter_id::UInt16)
+    hmsize = 12
+    if filter_id > 255
+        filter_name = ID_TO_DECOMPRESSOR[filter_id][4]
+        hmsize += 2 + length(filter_name)
+    end
+    write(io, HeaderMessage(HM_FILTER_PIPELINE, hmsize, 0))
     write(io, UInt8(2))                 # Version
     write(io, UInt8(1))                 # Number of Filters
-    write(io, filter_id)                # Filter Identification Value (= deflate)
-    write(io, UInt16(0))                # Flags
+    write(io, filter_id)                # Filter Identification Value
+    filter_id > 255 && write(io, UInt16(length(filter_name))) 
+                                        # Length of Filter Name
+    write(io, UInt16(0))                # Flags 
     write(io, UInt16(1))                # Number of Client Data Values
+    filter_id > 255 && write(io, filter_name) # Filter Name
     write(io, UInt32(5))                # Client Data (Compression Level)
-    take!(io)
+    nothing
 end
 
-const PIPELINE_MESSAGE_SIZE = length(deflate_pipeline_message(zero(UInt16)))
 
 function deflate_data(f::JLDFile, data::Array{T}, odr::S, wsession::JLDWriteSession,
                       compressor) where {T,S}
@@ -122,6 +130,47 @@ function deflate_data(f::JLDFile, data::Array{T}, odr::S, wsession::JLDWriteSess
     TranscodingStreams.finalize(compressor)
     res
 end
+
+
+@inline chunked_storage_message_size(ndims::Int) =
+    sizeof(HeaderMessage) + 5 + (ndims+1)*sizeof(Length) + 1 + sizeof(Length) + 4 + sizeof(RelOffset)
+
+
+function write_chunked_storage_message( io::IO,
+                                        elsize::Int,
+                                        dims::NTuple{N,Int},
+                                        filtered_size::Int,
+                                        offset::RelOffset) where N
+    write(io, HeaderMessage(HM_DATA_LAYOUT, chunked_storage_message_size(N) - sizeof(HeaderMessage), 0))
+    write(io, UInt8(4))                     # Version
+    write(io, UInt8(LC_CHUNKED_STORAGE))    # Layout Class
+    write(io, UInt8(2))                     # Flags (= SINGLE_INDEX_WITH_FILTER)
+    write(io, UInt8(N+1))                   # Dimensionality
+    write(io, UInt8(sizeof(Length)))        # Dimensionality Size
+    for i = N:-1:1
+        write(io, Length(dims[i]))          # Dimensions 1...N
+    end
+    write(io, Length(elsize))               # Element size (last dimension)
+    write(io, UInt8(1))                     # Chunk Indexing Type (= Single Chunk)
+    write(io, Length(filtered_size))        # Size of filtered chunk
+    write(io, UInt32(0))                    # Filters for chunk
+    write(io, offset)                       # Address
+end
+
+
+function write_compressed_data(cio, f, data, odr, wsession, filter_id, compressor)
+    write_filter_pipeline_message(cio, filter_id)
+
+    # deflate first
+    deflated = deflate_data(f, data, odr, wsession, compressor)
+
+    write_chunked_storage_message(cio, odr_sizeof(odr), size(data), length(deflated), h5offset(f, f.end_of_data))
+    write(f.io, end_checksum(cio))
+   
+    f.end_of_data += length(deflated)
+    write(f.io, deflated)
+end
+
 
 
 function read_compressed_array!(v::Array{T}, f::JLDFile{MmapIO},
@@ -157,7 +206,7 @@ function read_compressed_array!(v::Array{T}, f::JLDFile{IOStream},
     invoke_again, decompressor = get_decompressor(filter_id)
     if invoke_again
         return Base.invokelatest(read_compressed_array!, v, f, rr, data_length, filter_id)
-    end    
+    end
     io = f.io
     data_offset = position(io)
     n = length(v)
@@ -170,45 +219,4 @@ function read_compressed_array!(v::Array{T}, f::JLDFile{IOStream},
     end
     seek(io, data_offset + data_length)
     v
-end
-
-
-
-@inline chunked_storage_message_size(ndims::Int) =
-    sizeof(HeaderMessage) + 5 + (ndims+1)*sizeof(Length) + 1 + sizeof(Length) + 4 + sizeof(RelOffset)
-
-
-function write_chunked_storage_message(
-    io::IO,
-    elsize::Int,
-    dims::NTuple{N,Int},
-    filtered_size::Int,
-    offset::RelOffset) where N
-    write(io, HeaderMessage(HM_DATA_LAYOUT, chunked_storage_message_size(N) - sizeof(HeaderMessage), 0))
-    write(io, UInt8(4))                     # Version
-    write(io, UInt8(LC_CHUNKED_STORAGE))    # Layout Class
-    write(io, UInt8(2))                     # Flags (= SINGLE_INDEX_WITH_FILTER)
-    write(io, UInt8(N+1))                   # Dimensionality
-    write(io, UInt8(sizeof(Length)))        # Dimensionality Size
-    for i = N:-1:1
-        write(io, Length(dims[i]))          # Dimensions 1...N
-    end
-    write(io, Length(elsize))               # Element size (last dimension)
-    write(io, UInt8(1))                     # Chunk Indexing Type (= Single Chunk)
-    write(io, Length(filtered_size))        # Size of filtered chunk
-    write(io, UInt32(0))                    # Filters for chunk
-    write(io, offset)                       # Address
-end
-
-
-function write_compressed_data(cio, f, data, odr, wsession, filter_id, compressor)
-    write(cio, deflate_pipeline_message(filter_id))
-    # deflate first
-    deflated = deflate_data(f, data, odr, wsession, compressor)
-
-    write_chunked_storage_message(cio, odr_sizeof(odr), size(data), length(deflated), h5offset(f, f.end_of_data))
-    write(f.io, end_checksum(cio))
-   
-    f.end_of_data += length(deflated)
-    write(f.io, deflated)
 end

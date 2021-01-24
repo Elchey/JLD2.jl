@@ -55,16 +55,9 @@ function load_dataset(f::JLDFile, offset::RelOffset)
                 skip(cio, Int(dimensionality)*Int(dimensionality_size))
 
                 chunk_indexing_type = read(cio, UInt8)
-                #chunk_indexing_type == 1 || throw(UnsupportedFeatureException())
-                chunk_indexing_type == 3 && @info "Fixed Array Indexing"
-                if chunk_indexing_type == 1
-                    data_length = read(cio, Length)
-                    read(cio, UInt32)
-                elseif chunk_indexing_type == 3
-                    read(cio, UInt8)
-                else
-                    throw(UnsupportedFeatureException())
-                end
+                chunk_indexing_type == 1 || throw(UnsupportedFeatureException())
+                data_length = read(cio, Length)
+                read(cio, UInt32)
                 data_offset = fileoffset(f, read(cio, RelOffset))
                 chunked_storage = true
             else
@@ -76,7 +69,7 @@ function load_dataset(f::JLDFile, offset::RelOffset)
             nfilters = read(cio, UInt8)
             nfilters == 1 || throw(UnsupportedFeatureException())
             filter_id = read(cio, UInt16)
-            issupported_filter(filter_id) || throw(UnsupportedFeatureException())
+            issupported_filter(filter_id) || throw(UnsupportedFeatureException("Unknown Compression Filter $filter_id"))
         elseif msg.msg_type == HM_ATTRIBUTE
             if attrs === EMPTY_READ_ATTRIBUTES
                 attrs = ReadAttribute[read_attribute(cio, f)]
@@ -384,7 +377,7 @@ function write_dataset(
             return Base.invokelatest(write_dataset, f, dataspace, datatype, odr, data, wsession, compress)
         end
         layout_class = LC_CHUNKED_STORAGE
-        psz += chunked_storage_message_size(ndims(data)) + PIPELINE_MESSAGE_SIZE
+        psz += chunked_storage_message_size(ndims(data)) + pipeline_message_size(filter_id)
     else
         layout_class = LC_CONTIGUOUS_STORAGE
         psz += sizeof(ContiguousStorageMessage)
