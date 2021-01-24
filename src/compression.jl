@@ -48,7 +48,7 @@ function checked_import(pkg::Symbol)
             isa(m1, Module) && return false, m1
         end
         m = _findmod(pkg)
-        isnothing(m) || return false, Base.loaded_modules[m]
+        (m === nothing) || return false, Base.loaded_modules[m]
         topimport(pkg)
         return true, Base.loaded_modules[_findmod(pkg)]
     end
@@ -65,7 +65,7 @@ function Base.write(g::Group, name::AbstractString, obj, wsession::JLDWriteSessi
     f = g.f
     prewrite(f)
     (g, name) = pathize(g, name, true)
-    if !isnothing(compress) 
+    if !(compress === nothing) 
         if obj isa Array
             g[name] = write_dataset(f, obj, wsession, compress)
             return nothing
